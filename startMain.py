@@ -1,204 +1,205 @@
 #!/usr/bin/env python
-import socket, sys, requests, urllib.request, urllib.error, json, time, _strptime, threading, getopt, subprocess,  logging.config
-from bottle import route, run,template, static_file, request, response
-
+import socket, sys, requests, urllib.request, urllib.error, json, time, _strptime, threading, getopt, subprocess, \
+    logging.config
+from bottle import route, run, template, static_file, request, response
 
 import dataCollector, scheduler
 from tools import helper
 
-
-
 b_host = "0.0.0.0"
 b_port = 4382
 
-emul_port= 4390
+emul_port = 4390
 budo_port = 4383
 
 emulator = True
 
 apis = True
 apis_host = "localhost"
-apis_emul_port=43900
-apis_budo_port=43830
+apis_emul_port = 43900
+apis_budo_port = 43830
 
-apis_emul_url="http://"+apis_host+":"+str(apis_emul_port)
-apis_budo_url="http://"+apis_host+":"+str(apis_budo_port)
+apis_emul_url = "http://" + apis_host + ":" + str(apis_emul_port)
+apis_budo_url = "http://" + apis_host + ":" + str(apis_budo_port)
 
 ups_set_url = ":8080/1/ups1/operation/mode"
 set_url = ":4380/remote/set?"
 url = {"dcdc": "4380/remote/get",
        "meter": "4380/inquiry/09",
-       "emu":  "8080/1/log/data"}
+       "emu": "8080/1/log/data"}
 
-emul_url= "http://localhost:"+str(emul_port)
-budo_url= "http://localhost:"+str(budo_port)
+emul_url = "http://localhost:" + str(emul_port)
+budo_url = "http://localhost:" + str(budo_port)
 
-datacollectorinterval=5
-schedulerInterval=5
+datacollectorinterval = 5
+schedulerInterval = 5
 
 
 def _jsonResponse(obj):
-	if len(request.query.callback) > 0:
-		return request.query.callback + '(' + json.dumps(obj) + ')'
-	else:
-		response.content_type = 'application/json'
-		return json.dumps(obj)
+    if len(request.query.callback) > 0:
+        return request.query.callback + '(' + json.dumps(obj) + ')'
+    else:
+        response.content_type = 'application/json'
+        return json.dumps(obj)
 
 
 @route('/')
 def index():
-    oes_tuples=[]
+    oes_tuples = []
 
     if apis:
         try:
-            jsonrsp = urllib.request.urlopen(apis_budo_url+'/unitIds', timeout=1).read()
+            jsonrsp = urllib.request.urlopen(apis_budo_url + '/unitIds', timeout=1).read()
             out = json.loads(jsonrsp)
-            for oesid in sorted(out) :
-                if oesid in dataCollector.cache :
-                    row = [oesid, dataCollector.cache[oesid]['oesunit']['ip'], dataCollector.cache[oesid]['oesunit']['display']]
-                else :
+            for oesid in sorted(out):
+                if oesid in dataCollector.cache:
+                    row = [oesid, dataCollector.cache[oesid]['oesunit']['ip'],
+                           dataCollector.cache[oesid]['oesunit']['display']]
+                else:
                     row = [oesid, '--', '--']
                 oes_tuples.append(row)
         except Exception as e:
-            out = {'error' : str(e)}
+            out = {'error': str(e)}
             logger.warning(json.dumps(out))
-    else :
-        for oesid, ajson in sorted(dataCollector.cache.items()) :
+    else:
+        for oesid, ajson in sorted(dataCollector.cache.items()):
             row = [oesid, ajson["oesunit"]["ip"], ajson["oesunit"]["display"]]
             oes_tuples.append(row)
-        
-    #ipaddr = "1.2.3.4"#socket.gethostbyname(socket.gethostname())
+
+    # ipaddr = "1.2.3.4"#socket.gethostbyname(socket.gethostname())
     return template('main',
                     admintext="admin",
-                    title="Energy Exchange in "+area,
-                    #ip= ipaddr,
+                    title="Energy Exchange in " + area,
+                    # ip= ipaddr,
                     oes_tuples=sorted(oes_tuples),
                     emulator=emulator
                     )
+
 
 @route('/flushCache')
 def flushCache():
     dataCollector.forceCacheUpdate(emulator or apis)
     return "Cache has been flushed."
 
+
 @route('/upsMode/<upsmode>')
 def upsMode(upsmode):
-    try: 
+    try:
         mode = int(upsmode)
-        if mode>=0 and mode<=7 :
-            logger.info("setting ups mode of all units to "+str(mode))
-            out_json={}
-            for oesid in dataCollector.cache :
+        if mode >= 0 and mode <= 7:
+            logger.info("setting ups mode of all units to " + str(mode))
+            out_json = {}
+            for oesid in dataCollector.cache:
                 ip = dataCollector.cache[oesid]['oesunit']['ip']
                 url = "http://" + ip + ups_set_url
-                payload = {"operation_mode" : mode }
-                logger.info("sending request to : "+url)
-                logger.info("data : "+ str(payload))
-                headers = {'Content-Type':'application/json'}
-                r = requests.put(url, data=json.dumps(payload), headers=headers)#urllib2.Request(url, data)
-                logger.info(" response after setting ups mode "+str(r.json()))
+                payload = {"operation_mode": mode}
+                logger.info("sending request to : " + url)
+                logger.info("data : " + str(payload))
+                headers = {'Content-Type': 'application/json'}
+                r = requests.put(url, data=json.dumps(payload), headers=headers)  # urllib2.Request(url, data)
+                logger.info(" response after setting ups mode " + str(r.json()))
                 out_json[oesid] = r.json()
             return json.dumps(out_json)
         else:
-            raise ValueError("ups value not allowed "+str(mode))
+            raise ValueError("ups value not allowed " + str(mode))
     except ValueError:
         return json.dumps({"Error": "Mode must be allowed int"})
 
-    
+
 @route('/stopAll')
 def stopAll():
     out = json.loads(checkBudo())
-    logger.warning("manual stop of all beaglebones requested"+str(out))
-    
-    #if budo is running and has no error and its status is active, stop first via budoS
-    if out and 'error' not in out and 'active' in out and out['active'] :
+    logger.warning("manual stop of all beaglebones requested" + str(out))
+
+    # if budo is running and has no error and its status is active, stop first via budoS
+    if out and 'error' not in out and 'active' in out and out['active']:
         setbudo("stop")
         logger.info("stopping done by budo")
-    #if budo is not running or already stopped
-    else: 
+    # if budo is not running or already stopped
+    else:
         logger.info("stoppingall units by main controller")
-        threadList=[]
-        for oesid in dataCollector.cache :
-            #no matter what error happens, continue stopping all units
-            logger.info('stopping beaglebone '+oesid)
+        threadList = []
+        for oesid in dataCollector.cache:
+            # no matter what error happens, continue stopping all units
+            logger.info('stopping beaglebone ' + oesid)
             if emulator:
-                url = emul_url+"/set/dcdc/"+oesid+"?mode=0x0000&dvg=350&dig=2"
-                logger.info("stopping dcdc on emulator  "+url)
+                url = emul_url + "/set/dcdc/" + oesid + "?mode=0x0000&dvg=350&dig=2"
+                logger.info("stopping dcdc on emulator  " + url)
                 dataCollector.cache[oesid]["dcdc"] = directBeagleCall(url)
             else:
-                t = threading.Thread(target=sendRequest, name="stopasynch", args=(oesid,"mode=0x0000&dvg=350&dig=2",))
+                t = threading.Thread(target=sendRequest, name="stopasynch", args=(oesid, "mode=0x0000&dvg=350&dig=2",))
                 t.start()
                 threadList.append(t)
 
         for t in threadList:
             t.join()
     return json.dumps({"stopAll": 'done.'})
-        
+
 
 @route('/get/globalmode')
 def checkBudo():
-    try: 
+    try:
         logger.debug("Checking if budo responds")
-        if apis :
-            jsonrsp = urllib.request.urlopen(apis_budo_url+"/getStatus", timeout=1).read()
-        else :
-            jsonrsp = urllib.request.urlopen(budo_url+"/getStatus", timeout=1).read()
-        out= json.loads(jsonrsp, object_hook=helper.convert)  
- 
+        if apis:
+            jsonrsp = urllib.request.urlopen(apis_budo_url + "/getStatus", timeout=1).read()
+        else:
+            jsonrsp = urllib.request.urlopen(budo_url + "/getStatus", timeout=1).read()
+        out = json.loads(jsonrsp, object_hook=helper.convert)
+
     except socket.timeout as e:
-        out={"error": 'SocketTimeout'}
+        out = {"error": 'SocketTimeout'}
         logger.warning(json.dumps(out))
     except urllib.error.HTTPError as e:
-        out={"error": 'HTTPError'} 
+        out = {"error": 'HTTPError'}
         logger.warning(json.dumps(out))
     except urllib.error.URLError as e:
-        out={"error": 'URLError'}
+        out = {"error": 'URLError'}
         logger.warning(json.dumps(out))
-    return _jsonResponse(out)    
+    return _jsonResponse(out)
+
 
 @route('/set/budo/<mode>')
 def setbudo(mode):
     response.content_type = 'application/json'
     try:
-        logger.info("budo request "+mode)
+        logger.info("budo request " + mode)
         response.content_type = 'application/json'
-        #mode should be either "active" or "stop"
-        if apis :
-            url=apis_budo_url+"/"+mode
-        else :
-            url=budo_url+"/"+mode
-        logger.info("Setting budo to mode "+mode+" url: "+url)
+        # mode should be either "active" or "stop"
+        if apis:
+            url = apis_budo_url + "/" + mode
+        else:
+            url = budo_url + "/" + mode
+        logger.info("Setting budo to mode " + mode + " url: " + url)
         jsonrsp = urllib.request.urlopen(url, timeout=10).read()
-        out= json.loads(jsonrsp, object_hook=helper.convert)  
+        out = json.loads(jsonrsp, object_hook=helper.convert)
 
-
-    except :
+    except:
         e = sys.exc_info()[0]
-        logger.error("something did not work with mode setting"+str(e))
-        out= {"error":" could not set mode "+mode} 
+        logger.error("something did not work with mode setting" + str(e))
+        out = {"error": " could not set mode " + mode}
     return _jsonResponse(out)
 
 
 @route('/get/dealsInfo')
 def getBudoDeals():
-    try: 
-        if apis :
-            jsonrsp = urllib.request.urlopen(apis_budo_url+"/deals", timeout=1).read()
-        else: 
-            jsonrsp = urllib.request.urlopen(budo_url+"/deals", timeout=1).read()
-        out= json.loads(jsonrsp, object_hook=helper.convert)  
+    try:
+        if apis:
+            jsonrsp = urllib.request.urlopen(apis_budo_url + "/deals", timeout=1).read()
+        else:
+            jsonrsp = urllib.request.urlopen(budo_url + "/deals", timeout=1).read()
+        out = json.loads(jsonrsp, object_hook=helper.convert)
 
     except socket.timeout as e:
-        out={"error": 'SocketTimeout when trying to get Budo status'}
+        out = {"error": 'SocketTimeout when trying to get Budo status'}
         logger.warning(json.dumps(out))
     except urllib.error.HTTPError as e:
-        out={"error": 'HTTPError =  when trying to get Budo status'}
+        out = {"error": 'HTTPError =  when trying to get Budo status'}
         logger.warning(json.dumps(out))
     except urllib.error.URLError as e:
-        out={"error": 'URLError = when trying to get Budo status'}
+        out = {"error": 'URLError = when trying to get Budo status'}
         logger.warning(json.dumps(out))
     except Exception as e:
-        out={"error": 'Unknown Error'+str(e)}
+        out = {"error": 'Unknown Error' + str(e)}
         logger.warning(json.dumps(out))
     return _jsonResponse(out)
 
@@ -207,31 +208,34 @@ def getBudoDeals():
 def setOperationMode():
     if apis:
         try:
-            if apis :
-                jsonrsp = urllib.request.urlopen(apis_budo_url + '/setOperationMode?' + request.query_string, timeout = 1).read()
-                out = json.loads(jsonrsp, object_hook = helper.convert)
+            if apis:
+                jsonrsp = urllib.request.urlopen(apis_budo_url + '/setOperationMode?' + request.query_string,
+                                                 timeout=1).read()
+                out = json.loads(jsonrsp, object_hook=helper.convert)
                 scheduler.deleteScheduleIfNeed(request.query.unitId, 'softStop')
-            else :
-                out = {'error' : 'Cannot set operationMode, no APIS here.'}
+            else:
+                out = {'error': 'Cannot set operationMode, no APIS here.'}
         except Exception as e:
-            out = {'error' : str(e)}
+            out = {'error': str(e)}
             logger.warning(json.dumps(out))
     return json.dumps(out)
+
 
 @route('/shutDown')
 def shutDown():
     if apis:
         try:
-            if apis :
-                jsonrsp = urllib.request.urlopen(apis_budo_url + '/shutdown?' + request.query_string, timeout = 1).read()
-                out = json.loads(jsonrsp, object_hook = helper.convert)
+            if apis:
+                jsonrsp = urllib.request.urlopen(apis_budo_url + '/shutdown?' + request.query_string, timeout=1).read()
+                out = json.loads(jsonrsp, object_hook=helper.convert)
                 scheduler.deleteScheduleIfNeed(request.query.unitId, 'shutDown')
-            else :
-                out = {'error' : 'Cannot shutDown, no APIS here.'}
+            else:
+                out = {'error': 'Cannot shutDown, no APIS here.'}
         except Exception as e:
-            out = {'error' : str(e)}
+            out = {'error': str(e)}
             logger.warning(json.dumps(out))
     return json.dumps(out)
+
 
 @route('/schedules')
 def schedules():
@@ -239,6 +243,8 @@ def schedules():
         response.content_type = 'application/json'
         out = helper.convert(scheduler.schedule)
         return _jsonResponse(out)
+
+
 @route('/setSchedule')
 def setSchedule():
     unitId = request.query.unitId
@@ -248,7 +254,7 @@ def setSchedule():
         value = scheduler.fromIsoformat(request.query.value)
     scheduler.setSchedule(unitId, operation, value)
 
-    
+
 @route('/get/logInfo')
 def getLog():
     return _jsonResponse(dataCollector.cache)
@@ -257,24 +263,27 @@ def getLog():
 @route('/get/unit/<oesid>')
 def getRemote(oesid):
     return makeRequest(request, oesid, "all")
-    
+
 
 @route('/get/dcdc/<oesid>')
 def getRemoteDcdc(oesid):
     return makeRequest(request, oesid, "dcdc")
-    
+
 
 @route('/get/meter/<oesid>')
 def getRemoteMeter(oesid):
     return makeRequest(request, oesid, "meter")
 
+
 @route('/get/emu/<oesid>')
 def getRemoteEmu(oesid):
     return makeRequest(request, oesid, "emu")
 
+
 @route('/get/oesunit/<oesid>')
 def getRemoteOesunit(oesid):
     return makeRequest(request, oesid, "oesunit")
+
 
 # write commands -> synchronous call to bealgebone
 @route('/set/dcdc/<oesid>', method='GET')
@@ -284,71 +293,75 @@ def setDCDCRequest(oesid):
     if "&callback" in query:
         position = query.find("&callback")
         query = query[:position]
-    out=sendRequest(oesid, query)
+    out = sendRequest(oesid, query)
 
-    #logger.debug(out)
+    # logger.debug(out)
     return _jsonResponse(out)
+
+
 # write commands -> synchronous call to bealgebone
 @route('/set/<oesid>', method='GET')
-def setRequest(oesid): 
+def setRequest(oesid):
     response.content_type = 'application/json'
     query = request.query_string
     if "&callback" in query:
         position = query.find("&callback")
         query = query[:position]
-    out=sendRequest(oesid, query)
+    out = sendRequest(oesid, query)
 
-    #logger.debug(out)
+    # logger.debug(out)
     return _jsonResponse(out)
+
+
 def sendRequest(oesid, query):
     if emulator:
-        #use url of emulator
-        url = emul_url+"/set/dcdc/"+oesid+"?"+query
-        logger.info("setting value on emulator  "+url)
+        # use url of emulator
+        url = emul_url + "/set/dcdc/" + oesid + "?" + query
+        logger.info("setting value on emulator  " + url)
         dataCollector.cache[oesid]["dcdc"] = directBeagleCall(url)
-        #logger.info( dataCollector.cache[oesid]["dcdc"])
-        
-    else :
+        # logger.info( dataCollector.cache[oesid]["dcdc"])
+
+    else:
         ip = dataCollector.cache[oesid]['oesunit']['ip']
-        url = "http://" + ip + set_url  +query
-        logger.info( "setting " + url)
+        url = "http://" + ip + set_url + query
+        logger.info("setting " + url)
         dataCollector.cache[oesid]["dcdc"] = directBeagleCall(url)
-        
+
     return dataCollector.cache[oesid]["dcdc"]
-    
+
 
 # helper functions to get the actual valuealive
 def makeRequest(request, oesid, name):
     response.content_type = 'application/json'
     urgent = request.query.urgent
-    #if urgent=undefined returned uncached values
-    if urgent.lower()=="true" :
-        if apis :
-            logger.info("direct call to oesid "+ oesid)
-            dataCollector.cache[oesid] = directBeagleCall(apis_emul_url+"/get/log")[oesid]
+    # if urgent=undefined returned uncached values
+    if urgent.lower() == "true":
+        if apis:
+            logger.info("direct call to oesid " + oesid)
+            dataCollector.cache[oesid] = directBeagleCall(apis_emul_url + "/get/log")[oesid]
         elif emulator:
-            logger.info("direct call to oesid "+ oesid)
-            dataCollector.cache[oesid] = directBeagleCall(emul_url+"/get/log")[oesid]
+            logger.info("direct call to oesid " + oesid)
+            dataCollector.cache[oesid] = directBeagleCall(emul_url + "/get/log")[oesid]
         else:
-            logger.info( "direct request for "+oesid+" to get "+name)
+            logger.info("direct request for " + oesid + " to get " + name)
             updateValue(oesid, name)
     # should not happen except bealgebone is down  
     if not (oesid in dataCollector.cache):
-        
-        msg = "No response from Beaglebone "+oesid+" for " + name+ " at "+time.strftime("%H:%M:%S")
+        msg = "No response from Beaglebone " + oesid + " for " + name + " at " + time.strftime("%H:%M:%S")
         logger.warning(msg)
-        #logger.warning(dataCollector.cache)
+        # logger.warning(dataCollector.cache)
         return msg
-    
-    out="content"
-    if (name=="meter"):
-        out=dataCollector.cache[oesid]["dcdc"][name]
-    elif(name=="all"):
-        out=dataCollector.cache[oesid]
+
+    out = "content"
+    if (name == "meter"):
+        out = dataCollector.cache[oesid]["dcdc"][name]
+    elif (name == "all"):
+        out = dataCollector.cache[oesid]
     else:
-        out=dataCollector.cache[oesid][name]
+        out = dataCollector.cache[oesid][name]
     return _jsonResponse(out)
-    
+
+
 @route('/ipv4')
 def test():
     out = subprocess.check_output(['hostname', '-I']).split()
@@ -358,84 +371,92 @@ def test():
 #####
 # resources
 #####
-      
+
 @route('/js/<filename>')
 def js_static(filename):
     return static_file(filename, root='./js')
 
+
 @route('/img/<filename>')
 def img_static(filename):
     return static_file(filename, root='./img')
+
+
 @route('/css/images/<filename>')
 def img_static(filename):
     return static_file(filename, root='./img')
+
 
 @route('/css/<filename>')
 def img_static_css(filename):
     return static_file(filename, root='./css')
 
-    
+
 #####
 # update values from various beaglebones
 #####        
 def updateValues():
     for oesid in dataCollector.cache.keys():
         updateValue(oesid, "all")
-        
-            
+
+
 def updateValue(oesid, name):
-    try :
-        if(name=="oesunit"):
+    try:
+        if (name == "oesunit"):
             raise Exception("Oesunit direct call is not implemented")
-        elif(name=="all"):
-            dataCollector.cache[oesid]["dcdc"] = directBeagleCall("http://" + dataCollector.cache[oesid]['oesunit']['ip'] + ":" + url["dcdc"])
-            dataCollector.cache[oesid]["emu"] = directBeagleCall("http://" + dataCollector.cache[oesid]['oesunit']['ip'] + ":" + url["emu"])
-            #jsonrsp["received"]= time.strftime("%Y/%m/%d-%H:%M:%S")
-        elif(name=="meter"):
-            dataCollector.cache[oesid]["dcdc"]["meter"] = directBeagleCall("http://" + dataCollector.cache[oesid]['oesunit']['ip'] + ":" + url[name])
+        elif (name == "all"):
+            dataCollector.cache[oesid]["dcdc"] = directBeagleCall(
+                "http://" + dataCollector.cache[oesid]['oesunit']['ip'] + ":" + url["dcdc"])
+            dataCollector.cache[oesid]["emu"] = directBeagleCall(
+                "http://" + dataCollector.cache[oesid]['oesunit']['ip'] + ":" + url["emu"])
+            # jsonrsp["received"]= time.strftime("%Y/%m/%d-%H:%M:%S")
+        elif (name == "meter"):
+            dataCollector.cache[oesid]["dcdc"]["meter"] = directBeagleCall(
+                "http://" + dataCollector.cache[oesid]['oesunit']['ip'] + ":" + url[name])
         else:
-            dataCollector.cache[oesid][name] = directBeagleCall("http://" + dataCollector.cache[oesid]['oesunit']['ip'] + ":" + url[name])
-        dataCollector.cache[oesid]["time"]=time.strftime("%Y/%m/%d-%H:%M:%S")    
+            dataCollector.cache[oesid][name] = directBeagleCall(
+                "http://" + dataCollector.cache[oesid]['oesunit']['ip'] + ":" + url[name])
+        dataCollector.cache[oesid]["time"] = time.strftime("%Y/%m/%d-%H:%M:%S")
 
     except socket.timeout as e:
-        logger.error( 'SocketTimeout' + " for update on " +name+ " of " + oesid)
+        logger.error('SocketTimeout' + " for update on " + name + " of " + oesid)
     except urllib.error.HTTPError as e:
-        logger.error( 'HTTPError = ' + str(e.code)+ " for update on " +name+ " of " + oesid)
+        logger.error('HTTPError = ' + str(e.code) + " for update on " + name + " of " + oesid)
     except urllib.error.URLError as e:
-        logger.error( 'URLError = ' + str(e.reason) + " for update on " +name+ " of " + oesid)
-    #except Exception as e:
+        logger.error('URLError = ' + str(e.reason) + " for update on " + name + " of " + oesid)
+    # except Exception as e:
     #   logger.error( "Some unknown exception " +str(e) + " for update on " +name+ " of " + id)
-             
-def directBeagleCall(fullurl): 
-    #print fullurl
-    jsonrsp = urllib.request.urlopen(fullurl, timeout=5).read()
-    return json.loads(jsonrsp, object_hook=helper.convert)  
 
+
+def directBeagleCall(fullurl):
+    # print fullurl
+    jsonrsp = urllib.request.urlopen(fullurl, timeout=5).read()
+    return json.loads(jsonrsp, object_hook=helper.convert)
 
 
 def setup(argv):
-    #logging.getLogger("urllib3").setLevel(logging.WARN)
-    #logging.getLogger("urllib3.poolmanager").setLevel(logging.WARN)
-    #logging.getLogger("urllib3.connectionpool").setLevel(logging.WARN)
-    #logging.getLogger("urllib3.response").setLevel(logging.WARN)
-    #logging.getLogger("requests.auth").setLevel(logging.WARN)
-    #logging.getLogger("requests.models").setLevel(logging.WARN)
-    #logging.getLogger("requests").setLevel(logging.WARN)
+    # logging.getLogger("urllib3").setLevel(logging.WARN)
+    # logging.getLogger("urllib3.poolmanager").setLevel(logging.WARN)
+    # logging.getLogger("urllib3.connectionpool").setLevel(logging.WARN)
+    # logging.getLogger("urllib3.response").setLevel(logging.WARN)
+    # logging.getLogger("requests.auth").setLevel(logging.WARN)
+    # logging.getLogger("requests.models").setLevel(logging.WARN)
+    # logging.getLogger("requests").setLevel(logging.WARN)
     global area
     msg = helper.getFileInfo({}, '../../.oes')
-    if "area" in msg :
-        area=msg["area"]
+    if "area" in msg:
+        area = msg["area"]
     else:
-        area="undefined"
-        
+        area = "undefined"
+
     try:
-        opts, args = getopt.getopt(argv,"d:e:",["db=","emul="])
+        opts, args = getopt.getopt(argv, "d:e:", ["db=", "emul="])
     except getopt.GetoptError:
         logger.error('startvisual.py -d <db> -e <emul>')
         sys.exit(2)
     logger.debug('starting main_controller...')
-    #set level higher for third party modules
-    #logger.debug(logging.Logger.manager.loggerDict)
+    # set level higher for third party modules
+    # logger.debug(logging.Logger.manager.loggerDict)
 
     for opt, arg in opts:
         if opt == '-h':
@@ -443,61 +464,63 @@ def setup(argv):
             sys.exit()
         if opt in ("-d", "--db"):
             if arg.lower() in ["false", "f"]:
-                dataCollector.logToDB=False
-                logger.debug(  "Not saving to DB")
+                dataCollector.logToDB = False
+                logger.debug("Not saving to DB")
         if opt in ("-e", "--emul"):
             if arg.lower() in ["true", "t"]:
                 global emulator
                 emulator = True
-                area="emulator"
-                
+                area = "emulator"
+
     global budoType
-    if emulator :
-        logger.debug("emul_url "+emul_url)
-        logger.debug("budo_url "+budo_url)
-    if apis :
+    if emulator:
+        logger.debug("emul_url " + emul_url)
+        logger.debug("budo_url " + budo_url)
+    if apis:
         budoType = "apis"
-        logger.debug("apis_emul_url "+apis_emul_url)
-        logger.debug("apis_budo_url "+apis_budo_url)
+        logger.debug("apis_emul_url " + apis_emul_url)
+        logger.debug("apis_budo_url " + apis_budo_url)
 
 
 def bottleServerThread():
     run(host=b_host, port=b_port, quiet=False, reloader=False)
-    
+
 
 def main(argv):
     setup(argv)
-    #first time set values from beaglebones
-    #updateValues()
-    logger.info( "setup done")
+    # first time set values from beaglebones
+    # updateValues()
+    logger.info("setup done")
     global datacollectorinterval
     if emulator:
-        datacollectorinterval=1
+        datacollectorinterval = 1
 
-    
-    #start background thread to update values
-    if apis :
-        t = threading.Thread(target=dataCollector.startDataCollector, args=(datacollectorinterval,emulator or apis,apis_emul_url,), name="dataCollector")
-    else :
-        t = threading.Thread(target=dataCollector.startDataCollector, args=(datacollectorinterval,emulator or apis,emul_url,), name="dataCollector")
+    # start background thread to update values
+    if apis:
+        t = threading.Thread(target=dataCollector.startDataCollector,
+                             args=(datacollectorinterval, emulator or apis, apis_emul_url,), name="dataCollector")
+    else:
+        t = threading.Thread(target=dataCollector.startDataCollector,
+                             args=(datacollectorinterval, emulator or apis, emul_url,), name="dataCollector")
     t.daemon = True
     t.start()
-    
+
     time.sleep(datacollectorinterval)
 
     if apis:
-        t2 = threading.Thread(target = scheduler.startScheduler, args = (schedulerInterval, apis_budo_url,), name = 'scheduler')
+        t2 = threading.Thread(target=scheduler.startScheduler, args=(schedulerInterval, apis_budo_url,),
+                              name='scheduler')
         t2.daemon = True
         t2.start()
-  
-    #print dataCollector.cache
-    #starting bottle server in main thread
+
+    # print dataCollector.cache
+    # starting bottle server in main thread
     bottleServerThread()
 
-    
+
 if __name__ == "__main__":
-    logging.config.fileConfig("config/logger.conf",disable_existing_loggers=False)
+    logging.config.fileConfig("config/logger.conf", disable_existing_loggers=False)
     logger = logging.getLogger(__name__)
     main(sys.argv[1:])
-    
-#git test 9
+
+# git test 9
