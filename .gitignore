@@ -9,3 +9,4 @@ build
 /venv
 *.pyc
 schedule
+.idea
